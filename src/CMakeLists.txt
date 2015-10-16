@@ -73,7 +73,6 @@ add_custom_command(
   DEPENDS ${libswiftnav_SRCS}
   VERBATIM
   COMMAND "${PROJECT_SOURCE_DIR}/checks/checkoutput.sh"
-    "${PROJECT_SOURCE_DIR}/src/*.c"
     "${PROJECT_SOURCE_DIR}/checks/checkpatch.pl")
 
 add_custom_target(checkpatch DEPENDS checkpatch_output.txt) 
