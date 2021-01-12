@@ -13,8 +13,8 @@
 #ifndef LIBSWIFTNAV_AMBIGUITY_TEST_H
 #define LIBSWIFTNAV_AMBIGUITY_TEST_H
 
-#include "memory_pool.h"
-#include "sats_management.h"
+#include <libswiftnav/memory_pool.h>
+#include <libswiftnav/sats_management.h>
 
 #define MAX_HYPOTHESES 1000
 
@@ -64,7 +64,7 @@ typedef struct {
   z_t *itr_upper_bounds;
   z_t *box_lower_bounds;
   z_t *box_upper_bounds;
-} intersection_count_t; 
+} intersection_count_t;
 
 typedef struct {
   intersection_count_t *x;
@@ -119,8 +119,8 @@ s8 determine_sats_addition(ambiguity_test_t *amb_test,
                            z_t *Z_inv);
 // TODO(dsk) delete
 void add_sats_old(ambiguity_test_t *amb_test,
-                  u8 ref_prn,
-                  u32 num_added_dds, u8 *added_prns,
+                  gnss_signal_t ref_sid,
+                  u32 num_added_dds, gnss_signal_t *added_sids,
                   z_t *lower_bounds, z_t *upper_bounds,
                   z_t *Z_inv);
 void init_residual_matrices(residual_mtxs_t *res_mtxs, u8 num_dds, double *DE_mtx, double *obs_cov);

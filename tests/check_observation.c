@@ -1,57 +1,57 @@
-
 #include <check.h>
 #include <stdio.h>
-#include "observation.h"
+
+#include <libswiftnav/observation.h>
 
 navigation_measurement_t nm1 = {
-  .prn = 1,
+  .sid = {.sat = 1},
   .raw_pseudorange = 11,
-  .carrier_phase = 12,
+  .raw_carrier_phase = 12,
   .raw_doppler = 13,
   .snr = 14,
   .sat_pos = {1, 2, 3},
   .sat_vel = {4, 5, 6},
 };
 navigation_measurement_t nm1_2 = {
-  .prn = 1,
+  .sid = {.sat = 1},
   .raw_pseudorange = 111,
-  .carrier_phase = 112,
+  .raw_carrier_phase = 112,
   .raw_doppler = 113,
   .snr = 114,
   .sat_pos = {7, 8, 9},
   .sat_vel = {10, 11, 12},
 };
 navigation_measurement_t nm2 = {
-  .prn = 2,
+  .sid = {.sat = 2},
   .raw_pseudorange = 21,
-  .carrier_phase = 22,
+  .raw_carrier_phase = 22,
   .raw_doppler = 23,
   .snr = 224,
   .sat_pos = {1, 2, 3},
   .sat_vel = {4, 5, 6},
 };
 navigation_measurement_t nm2_2 = {
-  .prn = 2,
+  .sid = {.sat = 2},
   .raw_pseudorange = 221,
-  .carrier_phase = 222,
+  .raw_carrier_phase = 222,
   .raw_doppler = 223,
   .snr = 24,
   .sat_pos = {13, 14, 15},
   .sat_vel = {16, 17, 18},
 };
 navigation_measurement_t nm3 = {
-  .prn = 3,
+  .sid = {.sat = 3},
   .raw_pseudorange = 31,
-  .carrier_phase = 32,
+  .raw_carrier_phase = 32,
   .raw_doppler = 33,
   .snr = 34,
   .sat_pos = {1, 2, 3},
   .sat_vel = {4, 5, 6},
 };
 navigation_measurement_t nm4 = {
-  .prn = 4,
+  .sid = {.sat = 4},
   .raw_pseudorange = 41,
-  .carrier_phase = 42,
+  .raw_carrier_phase = 42,
   .raw_doppler = 43,
   .snr = 44,
   .sat_pos = {1, 2, 3},
@@ -99,7 +99,7 @@ START_TEST(test_single_diff_2)
     u8 num_match = single_diff(2, nms1, 2, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 1);
+    fail_unless(sds_out[0].sid.sat == 1);
     fail_unless(sds_out[0].pseudorange == 0);
     fail_unless(sds_out[0].carrier_phase == 0);
     fail_unless(sds_out[0].doppler == 0);
@@ -114,7 +114,7 @@ START_TEST(test_single_diff_2)
     num_match = single_diff(2, nms1, 2, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 1);
+    fail_unless(sds_out[0].sid.sat == 1);
     fail_unless(sds_out[0].pseudorange == -100);
     fail_unless(sds_out[0].carrier_phase == -100);
     fail_unless(sds_out[0].doppler == -100);
@@ -129,7 +129,7 @@ START_TEST(test_single_diff_2)
     num_match = single_diff(1, nms1, 2, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 1);
+    fail_unless(sds_out[0].sid.sat == 1);
     fail_unless(sds_out[0].pseudorange == 100);
     fail_unless(sds_out[0].carrier_phase == 100);
     fail_unless(sds_out[0].doppler == 100);
@@ -144,7 +144,7 @@ START_TEST(test_single_diff_2)
     num_match = single_diff(2, nms1, 1, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 1);
+    fail_unless(sds_out[0].sid.sat == 1);
     fail_unless(sds_out[0].pseudorange == 0);
     fail_unless(sds_out[0].carrier_phase == 0);
     fail_unless(sds_out[0].doppler == 0);
@@ -160,7 +160,7 @@ START_TEST(test_single_diff_2)
 
     fail_unless(num_match == 2);
 
-    fail_unless(sds_out[0].prn == 1);
+    fail_unless(sds_out[0].sid.sat == 1);
     fail_unless(sds_out[0].pseudorange == 100);
     fail_unless(sds_out[0].carrier_phase == 100);
     fail_unless(sds_out[0].doppler == 100);
@@ -168,7 +168,7 @@ START_TEST(test_single_diff_2)
     fail_unless(memcmp(sds_out[0].sat_pos, nm1.sat_pos, sizeof(nm1.sat_pos)) == 0);
     fail_unless(memcmp(sds_out[0].sat_vel, nm1.sat_vel, sizeof(nm1.sat_vel)) == 0);
 
-    fail_unless(sds_out[1].prn == 2);
+    fail_unless(sds_out[1].sid.sat == 2);
     fail_unless(sds_out[1].pseudorange == -200);
     fail_unless(sds_out[1].carrier_phase == -200);
     fail_unless(sds_out[1].doppler == -200);
@@ -188,7 +188,7 @@ START_TEST(test_single_diff_3)
 
     u8 num_match = single_diff(2, nms1, 2, nms2, sds_out);
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 3);
+    fail_unless(sds_out[0].sid.sat == 3);
 
     /* Test for both with two the other way */
     nms1[0] = nm2; nms1[1] = nm3;
@@ -197,7 +197,7 @@ START_TEST(test_single_diff_3)
     num_match = single_diff(2, nms1, 2, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 3);
+    fail_unless(sds_out[0].sid.sat == 3);
 
     /* Test when one has only one */
     nms1[0] = nm2;
@@ -206,7 +206,7 @@ START_TEST(test_single_diff_3)
     num_match = single_diff(1, nms1, 2, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 2);
+    fail_unless(sds_out[0].sid.sat == 2);
 
     /* Test when the other has only one */
     nms1[0] = nm1; nms1[1] = nm2;
@@ -215,7 +215,7 @@ START_TEST(test_single_diff_3)
     num_match = single_diff(2, nms1, 1, nms2, sds_out);
 
     fail_unless(num_match == 1);
-    fail_unless(sds_out[0].prn == 2);
+    fail_unless(sds_out[0].sid.sat == 2);
 }
 END_TEST
 
@@ -231,4 +231,3 @@ Suite* observation_test_suite(void)
 
   return s;
 }
-

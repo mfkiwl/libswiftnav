@@ -13,37 +13,83 @@
 #ifndef LIBSWIFTNAV_ALMANAC_H
 #define LIBSWIFTNAV_ALMANAC_H
 
-#include "common.h"
-#include "almanac.h"
+#include <libswiftnav/common.h>
+#include <libswiftnav/signal.h>
+#include <libswiftnav/time.h>
 
 /** \addtogroup almanac
  * \{ */
 
 /** Structure containing the GPS almanac for one satellite. */
 typedef struct {
-  double ecc;   /**< Eccentricity (unitless) */
-  double toa;   /**< Time of Applicability in seconds since Sunday. */
-  double inc;   /**< Inclination in radians. */
-  double rora;  /**< Rate of Right Ascension in radians/sec. */
-  double a;     /**< Semi-major axis in meters. */
-  double raaw;  /**< Right Ascension at Week in radians. */
-  double argp;  /**< Argument of Perigee in radians. */
-  double ma;    /**< Mean Anomaly at Time of Applicability in radians. */
-  double af0;   /**< 0-order clock correction in seconds. */
-  double af1;   /**< 1-order clock correction in seconds/second. */
-  u16 week;     /**< GPS week number, modulo 1024. */
-  u8 prn;       /**< PRN number of the satellite. */
-  u8 healthy;   /**< Satellite health status. */
-  u8 valid;     /**< Almanac is valid. */
+  double m0;       /**< Mean anomaly at reference time [semi-circles] */
+  double ecc;      /**< Eccentricity. */
+  double sqrta;    /**< Square root of the semi-major axis [sqrt(m)] */
+  double omega0;   /**< Longitude of ascending node
+                        of orbit plane at weekly epoch [semi-circles] */
+  double omegadot; /**< Rate of right ascension [semi-circles/s] */
+  double w;        /**< Argument of perigee [semi-circles] */
+  double inc;      /**< Inclindation angle at reference time [semi-circles]
+                        This must include the 0.3 offset from NAV delta_i. */
+  double af0;      /**< Time offset of the sat clock [s] **/
+  double af1;      /**< Drift of the sat clock [s/s] **/
+} almanac_kepler_t;
+
+/** Structure containing the SBAS almanac for one satellite. */
+typedef struct {
+  double pos[3]; /**< Position of the GEO at time toe [m] */
+  double vel[3]; /**< velocity of the GEO at time toe [m/s] */
+  double acc[3]; /**< velocity of the GEO at time toe [m/s^2] */
+} almanac_xyz_t;
+
+
+/** Structure containing the GLONASS almanac for one satellite. */
+
+typedef struct {
+  double lambda;      /**< Longitude of the first ascending node of the orbit
+                           in PZ-90.02 coordinate system, [semi-circles] */
+  double t_lambda;    /**< Time of the first ascending node passage, [s]*/
+  double i;           /**< Value of inclination at instant of t_lambda, 
+                           [semi-circles] */
+  double t;           /**< Value of Draconian period at instant of t_lambda,
+                           [s/orbital period] */
+  double t_dot;       /**< Rate of change of the Draconian period,
+                           [s/(orbital period^2)] */
+  double epsilon;     /**< Eccentricity at instant of t_lambda_n_A,
+                           [dimensionless] */
+  double omega;       /**< Argument of perigee at instant of t_lambda,
+                           [semi-circles] */
+} almanac_glo_t;
+
+
+/** Structure containing the almanac for one satellite. */
+typedef struct {
+  gnss_signal_t sid; /**< Signal ID. */
+  gps_time_t toa;    /**< Reference time of almanac. */
+  float ura;         /**< User range accuracy [m] */
+  u32 fit_interval;  /**< Curve fit interval [s] */
+  u8 valid;          /**< Almanac is valid. */
+  u8 health_bits;    /**< Satellite health status. */
+  union {
+    almanac_kepler_t kepler; /**< Parameters specific to GPS. */
+    almanac_xyz_t xyz;       /**< Parameters specific to SBAS. */
+    almanac_glo_t glo;       /**< Parameters specific to GLONASS. */
+  };
 } almanac_t;
 
 /** \} */
 
-void calc_sat_state_almanac(const almanac_t* alm, double t, s16 week,
-                            double pos[3], double vel[3]);
-void calc_sat_az_el_almanac(const almanac_t* alm, double t, s16 week,
-                            const double ref[3], double* az, double* el);
-double calc_sat_doppler_almanac(const almanac_t* alm, double t, s16 week,
-                                const double ref[3]);
+s8 calc_sat_state_almanac(const almanac_t *a, const gps_time_t *t,
+                            double pos[3], double vel[3],
+                            double *clock_err, double *clock_rate_err);
+s8 calc_sat_az_el_almanac(const almanac_t *a, const gps_time_t *t,
+                          const double ref[3], double *az, double *el);
+s8 calc_sat_doppler_almanac(const almanac_t *a, const gps_time_t *t,
+                            const double ref[3], double *doppler);
+
+u8 almanac_valid(const almanac_t *a, const gps_time_t *t);
+u8 satellite_healthy_almanac(const almanac_t *a);
+
+bool almanac_equal(const almanac_t *a, const almanac_t *b);
 
 #endif /* LIBSWIFTNAV_ALMANAC_H */

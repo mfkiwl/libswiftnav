@@ -1,0 +1,67 @@
+sudo: false
+
+# CMake 2.8.9 is needed to build libswiftnav, but Travis only supports
+# an earlier version. This sets up that dependency. See also:
+#   https://gist.github.com/winterz/10cc2741d466cbd8ff21
+#   https://github.com/travis-ci/travis-ci/issues/2030
+
+cache: pip
+
+addons:
+  apt:
+    sources:
+    - kalakris-cmake
+    packages:
+    - cmake
+    - check
+    - lcov
+    # Required for doxygen check
+    - doxygen
+    - texlive
+    - texlive-pictures
+    - pgf
+    # Required for gcc-arm-embedded
+    - lib32bz2-1.0
+    - lib32ncurses5
+    - lib32z1
+
+install:
+  - gem install coveralls-lcov
+  - pip install --user tox
+  # Hack so python bindings can find locally installed library file
+  - export LD_LIBRARY_PATH=$TRAVIS_BUILD_DIR/build/install/usr/local/lib
+  # Install ARM GCC toolchain
+  # TODO: Replace with PPA once whitelisted, see https://github.com/travis-ci/apt-source-whitelist/pull/219
+  - wget https://launchpad.net/gcc-arm-embedded/4.9/4.9-2015-q2-update/+download/gcc-arm-none-eabi-4_9-2015q2-20150609-linux.tar.bz2
+  - tar -xf gcc-arm-none-eabi-4_9-2015q2-20150609-linux.tar.bz2
+  - export PATH=$PATH:$PWD/gcc-arm-none-eabi-4_9-2015q2/bin
+  # Install doxygen 1.8
+  # TODO: Replace with PPA once whitelisted, see https://github.com/travis-ci/apt-source-whitelist/issues/40
+
+
+script:
+  # Test libswiftnav
+  - mkdir build
+  - cd build/
+  - cmake -DCMAKE_BUILD_TYPE=Coverage ../
+  - make
+  # Check the doxygen
+  - make check-style
+  # Install locally to avoid sudo
+  - make DESTDIR="./install" install
+  # Test cortex-m4 cross-compile
+  - cd $TRAVIS_BUILD_DIR
+  - mkdir build_arm
+  - cd build_arm/
+  - cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/Toolchain-gcc-arm-embedded.cmake -DCMAKE_SYSTEM_PROCESSOR=cortex-m4 ../
+  - make
+  # Test libswiftnav-python
+  - cd ../python
+  - tox
+
+after_success:
+  - cd $TRAVIS_BUILD_DIR
+  - lcov --compat-libtool --directory . --capture --output-file coverage.info
+  # Remove coverage info for tests (always 100%) and stdlib
+  - lcov --remove coverage.info 'tests/*' '/usr/*' --output-file coverage.info
+  - coveralls-lcov coverage.info

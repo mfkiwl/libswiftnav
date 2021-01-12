@@ -12,9 +12,9 @@
 
 #include <math.h>
 
-#include "bits.h"
-#include "edc.h"
-#include "rtcm3.h"
+#include <libswiftnav/bits.h>
+#include <libswiftnav/edc.h>
+#include <libswiftnav/rtcm3.h>
 
 #define RTCM3_PREAMBLE 0xD3 /**< RTCM v3 Frame sync / preamble byte. */
 #define PRUNIT_GPS 299792.458 /**< RTCM v3 Unit of GPS Pseudorange (m) */
@@ -255,7 +255,7 @@ static void gen_obs_gps(navigation_measurement_t *nm,
   double prc = *pr * 0.02 + *amb * PRUNIT_GPS;
 
   /* L1 phaserange - L1 pseudorange */
-  double cp_pr = nm->carrier_phase - prc / (CLIGHT / FREQ1);
+  double cp_pr = nm->raw_carrier_phase - prc / (CLIGHT / FREQ1);
 
   /* If the phaserange and pseudorange have diverged close to the limits of the
    * data field (20 bits) then we modify the carrier phase by an integer amount
@@ -265,7 +265,7 @@ static void gen_obs_gps(navigation_measurement_t *nm,
    * +/- 1379 cycles. Limit to just 1000 as that should still be plenty. */
   if (fabs(cp_pr) > 1000) {
     nm->lock_time = 0;
-    nm->carrier_phase -= (s32)cp_pr;
+    nm->raw_carrier_phase -= (s32)cp_pr;
     cp_pr -= (s32)cp_pr;
   }
 
@@ -307,7 +307,7 @@ u16 rtcm3_encode_1002(u8 *buff, u16 id, gps_time_t t, u8 n_sat,
   for (u8 i=0; i<n_sat; i++) {
     gen_obs_gps(&nm[i], &amb, &pr, &ppr, &lock, &cnr);
 
-    setbitu(buff, bit, 6,  nm[i].prn + 1); bit += 6;
+    setbitu(buff, bit, 6, nm[i].sid.sat); bit += 6;
     /* TODO: set GPS code indicator if we ever support P(Y) code measurements. */
     setbitu(buff, bit, 1,  0);    bit += 1;
     setbitu(buff, bit, 24, pr);   bit += 24;
@@ -356,7 +356,7 @@ s8 rtcm3_decode_1002(u8 *buff, u16 *id, double *tow, u8 *n_sat,
   u16 bit = 64;
   for (u8 i=0; i<*n_sat; i++) {
     /* TODO: Handle SBAS prns properly, numbered differently in RTCM? */
-    nm[i].prn = getbitu(buff, bit, 6) - 1; bit += 6;
+    nm[i].sid.sat = getbitu(buff, bit, 6); bit += 6;
 
     u8 code = getbitu(buff, bit, 1); bit += 1;
     /* TODO: When we start storing the signal/system etc. properly we can
@@ -372,7 +372,7 @@ s8 rtcm3_decode_1002(u8 *buff, u16 *id, double *tow, u8 *n_sat,
     u8 cnr = getbitu(buff, bit, 8); bit += 8;
 
     nm[i].raw_pseudorange = 0.02*pr + PRUNIT_GPS*amb;
-    nm[i].carrier_phase = (nm[i].raw_pseudorange + 0.0005*ppr) / (CLIGHT / FREQ1);
+    nm[i].raw_carrier_phase = (nm[i].raw_pseudorange + 0.0005*ppr) / (CLIGHT / FREQ1);
     nm[i].lock_time = from_lock_ind(lock);
     nm[i].snr = pow(10.0, ((cnr / 4.0) - 40.0) / 10.0);
   }
@@ -383,5 +383,3 @@ s8 rtcm3_decode_1002(u8 *buff, u16 *id, double *tow, u8 *n_sat,
 
 /** \} */
 /** \} */
-
-

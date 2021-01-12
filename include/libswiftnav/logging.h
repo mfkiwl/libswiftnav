@@ -15,7 +15,7 @@
 
 #include <stdio.h>
 
-#include "common.h"
+#include <libswiftnav/common.h>
 
 /* DEBUG off by default, enable it on a per-file basis. */
 #ifndef DEBUG
@@ -90,7 +90,7 @@ do {                        \
 } while (0)
 
 /** Log a debug message indicating entry to a function.
- * Logs a debug message of the form `<function_name>` to indicate entry to a
+ * Logs a debug message of the form `\<function_name\>` to indicate entry to a
  * function. `function_name` is automatically filled in with the name of the
  * current function by GCC magic.
  */
@@ -102,7 +102,7 @@ do {                               \
 } while (0)
 
 /** Log a debug message indicating exit to a function.
- * Logs a debug message of the form `</function_name>` to indicate exit from a
+ * Logs a debug message of the form `\</function_name\>` to indicate exit from a
  * function. `function_name` is automatically filled in with the name of the
  * current function by GCC magic.
  */
@@ -116,4 +116,3 @@ do {                                \
 /** \} */
 
 #endif /* LIBSWIFTNAV_LOGGING_H */
-

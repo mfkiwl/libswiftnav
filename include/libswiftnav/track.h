@@ -13,8 +13,9 @@
 #ifndef LIBSWIFTNAV_TRACK_H
 #define LIBSWIFTNAV_TRACK_H
 
-#include "common.h"
-#include "ephemeris.h"
+#include <libswiftnav/common.h>
+#include <libswiftnav/ephemeris.h>
+#include <libswiftnav/signal.h>
 
 /** \addtogroup track
  * \{ */
@@ -138,15 +139,16 @@ typedef struct {
  * \see calc_navigation_measurement()
  */
 typedef struct {
-  u8 prn;                  /**< Satellite PRN. */
+  gnss_signal_t sid;       /**< Satellite signal. */
   double code_phase_chips; /**< The code-phase in chips at `receiver_time`. */
   double code_phase_rate;  /**< Code phase rate in chips/s. */
   double carrier_phase;    /**< Carrier phase in cycles. */
   double carrier_freq;     /**< Carrier frequency in Hz. */
   u32 time_of_week_ms;     /**< Number of milliseconds since the start of the
                                 GPS week corresponding to the last code rollover.  */
-  double receiver_time;    /**< Receiver clock time at which this measurement
-                                is valid in seconds. */
+  double rec_time_delta;   /**< Difference between receiver clock time at which
+                                this measurement is valid and reference time
+                                (seconds). */
   double snr;              /**< Signal to noise ratio. */
   u16 lock_counter;        /**< This number is changed each time the tracking
                                 channel is re-locked or a cycle slip is
@@ -159,6 +161,7 @@ typedef struct {
 typedef struct {
   double raw_pseudorange;
   double pseudorange;
+  double raw_carrier_phase;
   double carrier_phase;
   double raw_doppler;
   double doppler;
@@ -167,7 +170,7 @@ typedef struct {
   double snr;
   double lock_time;
   gps_time_t tot;
-  u8 prn;
+  gnss_signal_t sid;
   u16 lock_counter;
 } navigation_measurement_t;
 
@@ -219,6 +222,7 @@ void comp_tl_init(comp_tl_state_t *s, float loop_freq,
 void comp_tl_update(comp_tl_state_t *s, correlation_t cs[3]);
 
 void alias_detect_init(alias_detect_t *a, u32 acc_len, float time_diff);
+void alias_detect_reinit(alias_detect_t *a, u32 acc_len, float time_diff);
 void alias_detect_first(alias_detect_t *a, float I, float Q);
 float alias_detect_second(alias_detect_t *a, float I, float Q);
 
@@ -230,17 +234,13 @@ void cn0_est_init(cn0_est_state_t *s, float bw, float cn0_0,
                   float cutoff_freq, float loop_freq);
 float cn0_est(cn0_est_state_t *s, float I, float Q);
 
-void calc_navigation_measurement(u8 n_channels, channel_measurement_t meas[],
-                                 navigation_measurement_t nav_meas[],
-                                 double nav_time, ephemeris_t ephemerides[]);
-void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[],
-                                  navigation_measurement_t* nav_meas[],
-                                  double nav_time, ephemeris_t* ephemerides[]);
+s8 calc_navigation_measurement(u8 n_channels, const channel_measurement_t *meas[],
+                               navigation_measurement_t *nav_meas[], gps_time_t *rec_time,
+                               const ephemeris_t* e[]);
 
 int nav_meas_cmp(const void *a, const void *b);
 u8 tdcp_doppler(u8 n_new, navigation_measurement_t *m_new,
                 u8 n_old, navigation_measurement_t *m_old,
-                navigation_measurement_t *m_corrected);
+                navigation_measurement_t *m_corrected, double dt);
 
 #endif /* LIBSWIFTNAV_TRACK_H */
-

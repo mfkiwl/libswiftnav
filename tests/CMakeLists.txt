@@ -17,7 +17,7 @@ else (CMAKE_CROSSCOMPILING)
       set(TEST_LIBS ${TEST_LIBS} rt)
     endif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 
-    include_directories("${PROJECT_SOURCE_DIR}/include/libswiftnav")
+    include_directories("${PROJECT_SOURCE_DIR}/include")
     include_directories("${PROJECT_SOURCE_DIR}/src")
     include_directories("${PROJECT_SOURCE_DIR}/libfec/include")
 
@@ -25,6 +25,7 @@ else (CMAKE_CROSSCOMPILING)
       check_main.c
       check_utils.c
 
+      check_almanac.c
       check_dgnss_management.c
       check_baseline.c
       check_amb_kf.c
@@ -32,6 +33,7 @@ else (CMAKE_CROSSCOMPILING)
       check_pvt.c
       check_edc.c
       check_bits.c
+      check_correlator.c
       check_memory_pool.c
       check_rtcm3.c
       check_coord_system.c
@@ -42,7 +44,15 @@ else (CMAKE_CROSSCOMPILING)
       check_ephemeris.c
       check_set.c
       check_viterbi.c
-      check_gpstime.c
+      check_time.c
+      check_ionosphere.c
+      check_signal.c
+      check_track.c
+      check_decode_l2c_capability.c
+      check_cnav.c
+      check_glo_decoder.c
+      check_troposphere.c
+      check_counter_checker.c
     )
 
     target_link_libraries(test_libswiftnav ${TEST_LIBS})
@@ -68,8 +78,8 @@ else (CMAKE_CROSSCOMPILING)
       COMMAND test_libswiftnav
     )
 
-    file(COPY data/waas_check.bin DESTINATION ${CMAKE_BINARY_DIR}/tests)
-    file(COPY data/waas_data.bin DESTINATION ${CMAKE_BINARY_DIR}/tests)
+    file(COPY data/v27_sym_waas.bin DESTINATION ${CMAKE_BINARY_DIR}/tests)
+    file(COPY data/v27_bits_waas.bin DESTINATION ${CMAKE_BINARY_DIR}/tests)
 
     # TODO run even if tests fail?
     # TODO check that we're in a coverage build
@@ -83,3 +93,5 @@ else (CMAKE_CROSSCOMPILING)
 
   endif (NOT CHECK_FOUND)
 endif (CMAKE_CROSSCOMPILING)
+
+add_subdirectory(data/l2cbitstream/libl2cbitstream)

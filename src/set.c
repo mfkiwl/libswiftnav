@@ -13,7 +13,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include "set.h"
+#include <libswiftnav/set.h>
 
 /** \defgroup set Utility functions for dealing with sets
  * \{ */
@@ -26,7 +26,6 @@ int cmp_##ta##_##tb(const void * a, const void * b) \
   return (*da > *db) - (*da < *db);                 \
 }
 
-CMP_FUNCTION(u8, u8)
 CMP_FUNCTION(s32, s32)
 
 /* Tests if an array of PRNs form a sorted set with no duplicate elements.
@@ -35,9 +34,9 @@ CMP_FUNCTION(s32, s32)
  * \param prns Array of PRNs
  * \return `TRUE` if the PRNs form an ordered set, else `FALSE`
  */
-bool is_prn_set(u8 n, const u8 *prns)
+bool is_sid_set(u8 n, const gnss_signal_t *sids)
 {
-  return is_set(n, sizeof(u8), prns, cmp_u8_u8);
+  return is_set(n, sizeof(gnss_signal_t), sids, cmp_sid_sid);
 }
 
 /* Tests if an array forms a sorted set with no duplicate elements.
@@ -212,7 +211,7 @@ u32 remove_element(u32 na, size_t sa, const void *as, void *a_out,
                    void *b, cmp_fn cmp)
 {
   /* Index of first element that isn't less than b.
-   * This element will be removed. 
+   * This element will be removed.
    * If b is larger than all of as, the last element of as will be removed. */
   u32 index = insertion_index(na, sa, as, b, cmp);
 
@@ -247,4 +246,3 @@ u32 insert_element(u32 na, size_t sa, const void *as, void *a_out,
 }
 
 /** \} */
-

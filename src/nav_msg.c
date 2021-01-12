@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Swift Navigation Inc.
+ * Copyright (C) 2010, 2016 Swift Navigation Inc.
  * Contact: Henry Hallam <henry@swift-nav.com>
  *
  * This source is subject to the license found in the file 'LICENSE' which must
@@ -9,26 +9,23 @@
  * EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
  */
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <assert.h>
 
-#include "logging.h"
-#include "constants.h"
-#include "bits.h"
-#include "nav_msg.h"
-
-/* Approx number of nav bit edges needed to accept bit sync for a
-   strong signal (sync will take longer on a weak signal) */
-#define BITSYNC_THRES 22
+#include <libswiftnav/logging.h>
+#include <libswiftnav/constants.h>
+#include <libswiftnav/bits.h>
+#include <libswiftnav/nav_msg.h>
+#include <libswiftnav/ionosphere.h>
+#include <libswiftnav/l2c_capability.h>
 
 void nav_msg_init(nav_msg_t *n)
 {
   /* Initialize the necessary parts of the nav message state structure. */
   memset(n, 0, sizeof(nav_msg_t));
-  n->bit_phase_ref = BITSYNC_UNSYNCED;
   n->next_subframe_id = 1;
   n->bit_polarity = BIT_POLARITY_UNKNOWN;
 }
@@ -72,118 +69,22 @@ static u32 extract_word(nav_msg_t *n, u16 bit_index, u8 n_bits, u8 invert)
   return word >> (32 - n_bits);
 }
 
-/* TODO: Bit synchronization that can operate with multi-ms integration times
-   e.g. http://www.thinkmind.org/download.php?articleid=spacomm_2013_2_30_30070
- */
-static void update_bit_sync(nav_msg_t *n, s32 corr_prompt_real)
-{
-  /* On 20th call:
-     bit_phase = 0
-     bitsync_count = 20
-     bit_integrate holds sum of first 20 correlations
-     bitsync_histogram is all zeros
-     bitsync_prev_corr[0]=0, others hold previous correlations ([1] = first)
-     In this function:
-       bitsync_prev_corr[0] <= corr_prompt_real (20th correlation)
-       bitsync_histogram[0] <= sum of corrs [0..19]
-     On 21st call:
-     bit_phase = 1
-     bit_integrate holds sum of corrs [0..20]
-       bit_integrate -= bitsync_prev_corr[1]
-         bit_integrate now holds sum of corrs [1..20]
-       bitsync_histogram[1] <= bit_integrate
-     ...
-     On 39th call:
-     bit_phase = 19
-00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40
-____bit_integrate is sum of these after 20th call__________
-                                                         __________________after 39th call__________________________
-
-       after subtraction, bit_integrate holds sum of corrs [19..38]
-       bitsync_histogram[19] <= bit_integrate. Now fully populated.
-       Suppose first correlation happened to be first ms of a nav bit
-        then max_i = bit_phase_ref = 0.
-  */
-
-  /* Maintain a rolling sum of the 20 most recent correlations in
-     bit_integrate */
-  n->bit_integrate -= n->bitsync_prev_corr[n->bit_phase];
-  n->bitsync_prev_corr[n->bit_phase] = corr_prompt_real;
-  if (n->bitsync_count < 20) {
-    n->bitsync_count++;
-    return;  /* That rolling accumulator is not valid yet */
-  }
-
-  /* Add the accumulator to the histogram for the relevant phase */
-  n->bitsync_histogram[(n->bit_phase) % 20] += abs(n->bit_integrate);
-
-  if (n->bit_phase == 20 - 1) {
-    /* Histogram is valid.  Find the two highest values. */
-    u32 max = 0, next_best = 0;
-    u32 max_prev_corr = 0;
-    u8 max_i = 0;
-    for (u8 i = 0; i < 20; i++) {
-      u32 v = n->bitsync_histogram[i];
-      if (v > max) {
-        next_best = max;
-        max = v;
-        max_i = i;
-      } else if (v > next_best) {
-        next_best = v;
-      }
-      /* Also find the highest value from the last 20 correlations.
-         We'll use this to normalize the threshold score. */
-      v = abs(n->bitsync_prev_corr[i]);
-      if (v > max_prev_corr)
-        max_prev_corr = v;
-    }
-    /* Form score from difference between the best and the second-best */
-    if (max - next_best > BITSYNC_THRES * 2 * max_prev_corr) {
-      /* We are synchronized! */
-      n->bit_phase_ref = max_i;
-      /* TODO: Subtract necessary older prev_corrs from bit_integrate to
-         ensure it will be correct for the upcoming first dump */
-    }
-  }
-}
-
 /** Navigation message decoding update.
- * Called once per tracking loop update. Performs the necessary steps to
- * recover the nav bit clock, store the nav bits and decode them.
+ * Called once per nav bit interval. Performs the necessary steps to
+ * store the nav bits and decode them.
  *
  * Also extracts and returns the GPS time of week each time a new subframe is
  * received.
  *
  * \param n Nav message decode state struct
- * \param corr_prompt_real In-phase prompt correlation from tracking loop
- * \param ms Number of milliseconds integration performed in the correlation
+ * \param bit_val State of the nav bit to process
  *
  * \return The GPS time of week in milliseconds of the current code phase
  *         rollover, or `TOW_INVALID` (-1) if unknown
  */
-s32 nav_msg_update(nav_msg_t *n, s32 corr_prompt_real, u8 ms)
+s32 nav_msg_update(nav_msg_t *n, bool bit_val)
 {
   s32 TOW_ms = TOW_INVALID;
-
-  n->bit_phase += ms;
-  n->bit_phase %= 20;
-  n->bit_integrate += corr_prompt_real;
-  /* Do we have bit phase lock yet? (Do we know which of the 20 possible PRN
-   * offsets corresponds to the nav bit edges?) */
-  if (n->bit_phase_ref == BITSYNC_UNSYNCED)
-    update_bit_sync(n, corr_prompt_real);
-
-  if (n->bit_phase != n->bit_phase_ref) {
-    /* Either we don't have bit phase lock, or this particular
-       integration is not aligned to a nav bit boundary. */
-    return TOW_INVALID;
-  }
-
-  /* Dump the nav bit, i.e. determine the sign of the correlation over the
-   * nav bit period. */
-  bool bit_val = n->bit_integrate > 0;
-  /* Zero the accumulator for the next nav bit. */
-  n->bit_integrate = 0;
 
   /* The following is offset by 27 to allow the handover word to be
    * overwritten.  This is not a problem as it's handled below and
@@ -267,6 +168,7 @@ s32 nav_msg_update(nav_msg_t *n, s32 corr_prompt_real, u8 ms)
         n->subframe_start_index = 0;
     }
   }
+
   return TOW_ms;
 }
 
@@ -321,16 +223,13 @@ static u8 nav_parity(u32 *word)
 bool subframe_ready(nav_msg_t *n) {
   return (n->subframe_start_index != 0);
 }
-
-s8 process_subframe(nav_msg_t *n, ephemeris_t *e) {
+s8 process_subframe(nav_msg_t *n, gnss_signal_t sid,
+                    gps_l1ca_decoded_data_t *data)
+{
   // Check parity and parse out the ephemeris from the most recently received subframe
 
-  if (!e) {
-    log_error("process_subframe: CALLED WITH e = NULL!");
-    n->subframe_start_index = 0;  // Mark the subframe as processed
-    n->next_subframe_id = 1;      // Make sure we start again next time
-    return -1;
-  }
+  assert(data != NULL);
+  memset(data, 0, sizeof(gps_l1ca_decoded_data_t));
 
   // First things first - check the parity, and invert bits if necessary.
   // process the data, skipping the first word, TLM, and starting with HOW
@@ -341,35 +240,40 @@ s8 process_subframe(nav_msg_t *n, ephemeris_t *e) {
     BIT_POLARITY_INVERTED;
   if ((prev_bit_polarity != BIT_POLARITY_UNKNOWN)
       && (prev_bit_polarity != n->bit_polarity)) {
-    log_error("PRN %02d Nav phase flip - half cycle slip detected, "
-              "but not corrected", e->prn+1);
+    log_warn_sid(sid, "Nav phase flip - half cycle slip detected, "
+                 "but not corrected");
     /* TODO: declare phase ambiguity to IAR */
   }
 
   /* Complain if buffer overrun */
   if (n->overrun) {
-    log_error("PRN %02d nav_msg subframe buffer overrun!", e->prn+1);
+    log_error_sid(sid, "nav_msg subframe buffer overrun!");
     n->overrun = false;
   }
 
   /* Extract word 2, and the last two parity bits of word 1 */
   u32 sf_word2 = extract_word(n, 28, 32, 0);
   if (nav_parity(&sf_word2)) {
-    log_info("PRN %02d subframe parity mismatch (word 2)", e->prn+1);
+    log_info_sid(sid, "subframe parity mismatch (word 2)");
     n->subframe_start_index = 0;  // Mark the subframe as processed
     n->next_subframe_id = 1;      // Make sure we start again next time
     return -2;
   }
 
-  u8 sf_id = sf_word2 >> 8 & 0x07;    // Which of 5 possible subframes is it?
+  n->alert = sf_word2 >> 12 & 0x01; // Alert flag, bit 18
+  if (n->alert) {
+    log_warn_sid(sid, "alert flag set! Ignoring satellite.");
+  }
 
-  if (sf_id <= 3 && sf_id == n->next_subframe_id) {  // Is it the one that we want next?
+  u8 sf_id = sf_word2 >> 8 & 0x07;    // Which of 5 possible subframes is it? bits 20-22
+
+  if (sf_id <= 4 && sf_id == n->next_subframe_id) {  // Is it the one that we want next?
 
     for (int w = 0; w < 8; w++) {   // For words 3..10
       n->frame_words[sf_id-1][w] = extract_word(n, 30*(w+2) - 2, 32, 0);    // Get the bits
       // MSBs are D29* and D30*.  LSBs are D1...D30
       if (nav_parity(&n->frame_words[sf_id-1][w])) {  // Check parity and invert bits if D30*
-        log_info("PRN %02d subframe parity mismatch (word %d)", e->prn+1, w+3);
+        log_info_sid(sid, "subframe parity mismatch (word %d)", w+3);
         n->next_subframe_id = 1;      // Make sure we start again next time
         n->subframe_start_index = 0;  // Mark the subframe as processed
         return -3;
@@ -379,14 +283,38 @@ s8 process_subframe(nav_msg_t *n, ephemeris_t *e) {
     n->next_subframe_id++;
 
     if (sf_id == 3) {
-      // Got all of subframes 1 to 3
-      n->next_subframe_id = 1;      // Make sure we start again next time
-
       // Now let's actually decode the ephemeris...
-      decode_ephemeris(n->frame_words, e);
+      data->ephemeris.sid = sid;
+      decode_ephemeris(n->frame_words, &data->ephemeris);
+      data->ephemeris_upd_flag = true;
 
       return 1;
+    }
 
+    if (4 == sf_id) { /* parse Subframe 4 */
+       /*  get words 3-8 from 25th page (SV config
+       *  bits) */
+
+      /* check Word 3 bits 2..7 (63..69) for Page ID, see IS-200H, pg. 84
+       * Page 25 has ID 63, see IS-200H, pg. 109-110 */
+      if ((n->frame_words[3][3-3] >> (30-8) & 0x3f) == 63) {
+        decode_l2c_capability(n->frame_words[3], &(data->gps_l2c_sv_capability));
+        data->gps_l2c_sv_capability_upd_flag = true;
+      }
+
+     /* check Word 3 bits 2..7 (63..69) for Page ID 18,
+      * which contains iono data
+      * Page 18 has ID 56, see IS-200H, pg. 109-110 */
+      if ((n->frame_words[3][3-3] >> (30-8) & 0x3f) == 56) {
+       /* decode ionospheric correction data */
+        decode_iono_parameters(n->frame_words[3], &data->iono);
+        data->iono_corr_upd_flag = true;
+      }
+
+      /* Got all of subframes 1 to 4 */
+      n->next_subframe_id = 1; /* Make sure we start again next time */
+
+      return 1;
     }
   } else {  // didn't get the subframe that we want next
       n->next_subframe_id = 1;      // Make sure we start again next time
@@ -396,4 +324,3 @@ s8 process_subframe(nav_msg_t *n, ephemeris_t *e) {
   return 0;
 
 }
-

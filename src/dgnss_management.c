@@ -13,14 +13,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
-#include "logging.h"
-#include "amb_kf.h"
-#include "baseline.h"
-#include "observation.h"
-#include "dgnss_management.h"
-#include "linear_algebra.h"
-#include "filter_utils.h"
-#include "ambiguity_test.h"
+
+#include <libswiftnav/logging.h>
+#include <libswiftnav/amb_kf.h>
+#include <libswiftnav/baseline.h>
+#include <libswiftnav/observation.h>
+#include <libswiftnav/dgnss_management.h>
+#include <libswiftnav/linear_algebra.h>
+#include <libswiftnav/filter_utils.h>
+#include <libswiftnav/ambiguity_test.h>
 
 nkf_t nkf;
 sats_management_t sats_management;
@@ -64,7 +65,7 @@ void make_measurements(u8 num_double_diffs, const sdiff_t *sdiffs, double *raw_m
   DEBUG_EXIT();
 }
 
-static bool prns_match(const u8 *old_non_ref_prns, u8 num_non_ref_sdiffs,
+static bool sids_match(const gnss_signal_t *old_non_ref_sids, u16 num_non_ref_sdiffs,
                        const sdiff_t *non_ref_sdiffs)
 {
   if (sats_management.num_sats-1 != num_non_ref_sdiffs) {
@@ -73,7 +74,7 @@ static bool prns_match(const u8 *old_non_ref_prns, u8 num_non_ref_sdiffs,
   }
   for (u8 i=0; i<num_non_ref_sdiffs; i++) {
     /* iterate through the non-reference_sats, checking they match. */
-    if (old_non_ref_prns[i] != non_ref_sdiffs[i].prn) {
+    if (!sid_is_equal(old_non_ref_sids[i], non_ref_sdiffs[i].sid)) {
       return false;
     }
   }
@@ -83,17 +84,17 @@ static bool prns_match(const u8 *old_non_ref_prns, u8 num_non_ref_sdiffs,
 /** Finds the prns of the intersection between old prns and new measurements.
  * It returns the length of the intersection
  */
-static u8 dgnss_intersect_sats(u8 num_old_prns, const u8 *old_prns,
+static u8 dgnss_intersect_sats(u8 num_old_sids, const gnss_signal_t *old_sids,
                                u8 num_sdiffs, const sdiff_t *sdiffs,
                                u8 *ndx_of_intersection_in_old,
                                u8 *ndx_of_intersection_in_new)
 {
   u8 i, j, n = 0;
-  /* Loop over old_prns and sdiffs and check if a PRN is present in both. */
-  for (i=0, j=0; i<num_old_prns && j<num_sdiffs; i++, j++) {
-    if (old_prns[i] < sdiffs[j].prn)
+  /* Loop over old_sids and sdiffs and check if a PRN is present in both. */
+  for (i=0, j=0; i<num_old_sids && j<num_sdiffs; i++, j++) {
+    if (sid_compare(old_sids[i], sdiffs[j].sid) < 0)
       j--;
-    else if (old_prns[i] > sdiffs[j].prn)
+    else if (sid_compare(old_sids[i], sdiffs[j].sid) > 0)
       i--;
     else {
       ndx_of_intersection_in_old[n] = i;
@@ -132,7 +133,7 @@ void dgnss_init(u8 num_sats, sdiff_t *sdiffs, double receiver_ecef[3])
   DEBUG_EXIT();
 }
 
-void dgnss_rebase_ref(u8 num_sdiffs, sdiff_t *sdiffs, double receiver_ecef[3], u8 old_prns[MAX_CHANNELS], sdiff_t *corrected_sdiffs)
+void dgnss_rebase_ref(u8 num_sdiffs, sdiff_t *sdiffs, double receiver_ecef[3], gnss_signal_t old_sids[MAX_CHANNELS], sdiff_t *corrected_sdiffs)
 {
   (void)receiver_ecef;
   /* all the ref sat stuff */
@@ -140,24 +141,24 @@ void dgnss_rebase_ref(u8 num_sdiffs, sdiff_t *sdiffs, double receiver_ecef[3], u
   if (sats_management_code == NEW_REF_START_OVER) {
     log_info("Unable to rebase to new ref, resetting filters and starting over");
     dgnss_init(num_sdiffs, sdiffs, receiver_ecef);
-    memcpy(old_prns, sats_management.prns, sats_management.num_sats * sizeof(u8));
+    memcpy(old_sids, sats_management.sids, sats_management.num_sats * sizeof(gnss_signal_t));
     if (num_sdiffs >= 1) {
-      copy_sdiffs_put_ref_first(old_prns[0], num_sdiffs, sdiffs, corrected_sdiffs);
+      copy_sdiffs_put_ref_first(old_sids[0], num_sdiffs, sdiffs, corrected_sdiffs);
     }
     /*dgnss_init(num_sdiffs, sdiffs, receiver_ecef); //TODO use current baseline state*/
     return;
   }
   else if (sats_management_code == NEW_REF) {
     /* do everything related to changing the reference sat here */
-    rebase_nkf(&nkf, sats_management.num_sats, &old_prns[0], &sats_management.prns[0]);
+    rebase_nkf(&nkf, sats_management.num_sats, &old_sids[0], &sats_management.sids[0]);
   }
 }
 
 
-static void sdiffs_to_prns(u8 n, sdiff_t *sdiffs, u8 *prns)
+static void sdiffs_to_sids(u8 n, sdiff_t *sdiffs, gnss_signal_t *sids)
 {
   for (u8 i=0; i<n; i++) {
-    prns[i] = sdiffs[i].prn;
+    sids[i] = sdiffs[i].sid;
   }
 }
 
@@ -191,19 +192,19 @@ static void dgnss_update_sats(u8 num_sdiffs, double receiver_ecef[3],
   DEBUG_ENTRY();
 
   (void)dd_measurements;
-  u8 new_prns[num_sdiffs];
-  sdiffs_to_prns(num_sdiffs, sdiffs_with_ref_first, new_prns);
+  gnss_signal_t new_sids[num_sdiffs];
+  sdiffs_to_sids(num_sdiffs, sdiffs_with_ref_first, new_sids);
 
-  u8 old_prns[MAX_CHANNELS];
-  memcpy(old_prns, sats_management.prns, sats_management.num_sats * sizeof(u8));
+  gnss_signal_t old_sids[MAX_CHANNELS];
+  memcpy(old_sids, sats_management.sids, sats_management.num_sats * sizeof(gnss_signal_t));
 
-  if (!prns_match(&old_prns[1], num_sdiffs-1, &sdiffs_with_ref_first[1])) {
+  if (!sids_match(&old_sids[1], num_sdiffs-1, &sdiffs_with_ref_first[1])) {
     u8 ndx_of_intersection_in_old[sats_management.num_sats];
     u8 ndx_of_intersection_in_new[sats_management.num_sats];
     ndx_of_intersection_in_old[0] = 0;
     ndx_of_intersection_in_new[0] = 0;
     u8 num_intersection_sats = dgnss_intersect_sats(
-        sats_management.num_sats-1, &old_prns[1],
+        sats_management.num_sats-1, &old_sids[1],
         num_sdiffs-1, &sdiffs_with_ref_first[1],
         &ndx_of_intersection_in_old[1],
         &ndx_of_intersection_in_new[1]) + 1;
@@ -249,18 +250,27 @@ void dgnss_update(u8 num_sats, sdiff_t *sdiffs, double receiver_ecef[3],
                   bool disable_raim, double raim_threshold)
 {
   DEBUG_ENTRY();
-  if (DEBUG) {
-    printf("sdiff[*].prn = {");
-    for (u8 i=0; i < num_sats; i++) {
-      printf("%u, ",sdiffs[i].prn);
+  log_debug("dgnss_update");
+  log_debug("============");
+  log_debug("n: %u", num_sats);
+  log_debug("ecef: %f %f %f", receiver_ecef[0], receiver_ecef[1], receiver_ecef[2]);
+  log_debug("sdiff[*]");
+  for (u8 i=0; i < num_sats; i++) {
+    log_debug("sid: %u", sdiffs[i].sid.sat);
+    log_debug("  pr: %f", sdiffs[i].pseudorange);
+    log_debug("  cp: %f", sdiffs[i].carrier_phase);
+    log_debug("  do: %f", sdiffs[i].doppler);
+    log_debug("  sn: %f", sdiffs[i].snr);
+    log_debug("  pos/vel");
+    for (u8 j=0; j < 3; j++) {
+      log_debug("    %f %f", sdiffs[i].sat_pos[j], sdiffs[i].sat_vel[j]);
     }
-    printf("}\n");
   }
 
   if (num_sats <= 1) {
     sats_management.num_sats = num_sats;
     if (num_sats == 1) {
-      sats_management.prns[0] = sdiffs[0].prn;
+      sats_management.sids[0] = sdiffs[0].sid;
     }
     create_ambiguity_test(&ambiguity_test);
     DEBUG_EXIT();
@@ -273,12 +283,12 @@ void dgnss_update(u8 num_sats, sdiff_t *sdiffs, double receiver_ecef[3],
 
   sdiff_t sdiffs_with_ref_first[num_sats];
 
-  u8 old_prns[MAX_CHANNELS];
-  memcpy(old_prns, sats_management.prns, sats_management.num_sats * sizeof(u8));
+  gnss_signal_t old_sids[MAX_CHANNELS];
+  memcpy(old_sids, sats_management.sids, sats_management.num_sats * sizeof(gnss_signal_t));
 
   /* rebase globals to a new reference sat
    * (permutes sdiffs_with_ref_first accordingly) */
-  dgnss_rebase_ref(num_sats, sdiffs, receiver_ecef, old_prns, sdiffs_with_ref_first);
+  dgnss_rebase_ref(num_sats, sdiffs, receiver_ecef, old_sids, sdiffs_with_ref_first);
 
   double dd_measurements[2*(num_sats-1)];
   make_measurements(num_sats-1, sdiffs_with_ref_first, dd_measurements);
@@ -288,7 +298,6 @@ void dgnss_update(u8 num_sats, sdiff_t *sdiffs, double receiver_ecef[3],
 
   /* Unless the KF says otherwise, DONT TRUST THE MEASUREMENTS */
   u8 is_bad_measurement = true;
-
   double ref_ecef[3];
   if (num_sats >= 5) {
     double b2[3];
@@ -301,8 +310,6 @@ void dgnss_update(u8 num_sats, sdiff_t *sdiffs, double receiver_ecef[3],
       /* Use b = 0, continue */
       memset(b2, 0, sizeof(b2));
     }
-
-    double ref_ecef[3];
 
     vector_add_sc(3, receiver_ecef, b2, 0.5, ref_ecef);
 
@@ -320,7 +327,6 @@ void dgnss_update(u8 num_sats, sdiff_t *sdiffs, double receiver_ecef[3],
                                           nkf.state_cov_U, nkf.state_cov_D,
                                           is_bad_measurement);
 
-  /* TODO: Refactor - looks like ref_ecef can be passed in uninitialized */
   if (!is_bad_measurement) {
     update_ambiguity_test(ref_ecef,
                           dgnss_settings.phase_var_test,
@@ -367,14 +373,26 @@ s8 dgnss_iar_get_single_hyp(double *dhyp)
  */
 void dgnss_update_ambiguity_state(ambiguity_state_t *s)
 {
+  log_debug("dgnss_update_ambiguity_state");
+  log_debug("============================");
+  log_debug("==BEFORE==");
+  log_debug("fixed:");
+  for (u8 i=0; i < s->fixed_ambs.n; i++){
+    log_debug("  %u: %f", s->fixed_ambs.sids[i].sat, s->fixed_ambs.ambs[i]);
+  }
+  log_debug("float:");
+  for (u8 i=0; i < s->float_ambs.n; i++){
+    log_debug("  %u: %f", s->float_ambs.sids[i].sat, s->float_ambs.ambs[i]);
+  }
+
   /* Float filter */
   /* NOTE: if sats_management.num_sats <= 1 the filter is not updated and
    * nkf.state_dim may not match. */
   if (sats_management.num_sats > 1) {
     assert(sats_management.num_sats == nkf.state_dim+1);
     s->float_ambs.n = nkf.state_dim;
-    memcpy(s->float_ambs.prns, sats_management.prns,
-           (nkf.state_dim+1) * sizeof(u8));
+    memcpy(s->float_ambs.sids, sats_management.sids,
+           (nkf.state_dim+1) * sizeof(gnss_signal_t));
     memcpy(s->float_ambs.ambs, nkf.state_mean,
            nkf.state_dim * sizeof(double));
   } else {
@@ -384,14 +402,24 @@ void dgnss_update_ambiguity_state(ambiguity_state_t *s)
   /* Fixed filter */
   if (ambiguity_iar_can_solve(&ambiguity_test)) {
     s->fixed_ambs.n = ambiguity_test.amb_check.num_matching_ndxs;
-    s->fixed_ambs.prns [0] = ambiguity_test.sats.prns[0];
+    s->fixed_ambs.sids[0] = ambiguity_test.sats.sids[0];
     for (u8 i=0; i < s->fixed_ambs.n; i++) {
-      s->fixed_ambs.prns[i + 1] = ambiguity_test.sats.prns[1 +
+      s->fixed_ambs.sids[i + 1] = ambiguity_test.sats.sids[1 +
           ambiguity_test.amb_check.matching_ndxs[i]];
       s->fixed_ambs.ambs[i] = ambiguity_test.amb_check.ambs[i];
     }
   } else {
     s->fixed_ambs.n = 0;
+  }
+
+  log_debug("==AFTER==");
+  log_debug("fixed:");
+  for (u8 i=0; i < s->fixed_ambs.n; i++){
+    log_debug("  %u: %f", s->fixed_ambs.sids[i].sat, s->fixed_ambs.ambs[i]);
+  }
+  log_debug("float:");
+  for (u8 i=0; i < s->float_ambs.n; i++){
+    log_debug("  %u: %f", s->float_ambs.sids[i].sat, s->float_ambs.ambs[i]);
   }
 }
 
@@ -419,12 +447,43 @@ s8 dgnss_baseline(u8 num_sdiffs, const sdiff_t *sdiffs,
                   u8 *num_used, double b[3],
                   bool disable_raim, double raim_threshold)
 {
+
+  log_debug("dgnss_baseline");
+  log_debug("============");
+  log_debug("n: %u", num_sdiffs);
+  log_debug("ecef: %f %f %f", ref_ecef[0], ref_ecef[1], ref_ecef[2]);
+  log_debug("sdiff[*]");
+  for (u8 i=0; i < num_sdiffs; i++) {
+    log_debug("sid: %u", sdiffs[i].sid.sat);
+    log_debug("  pr: %f", sdiffs[i].pseudorange);
+    log_debug("  cp: %f", sdiffs[i].carrier_phase);
+    log_debug("  do: %f", sdiffs[i].doppler);
+    log_debug("  sn: %f", sdiffs[i].snr);
+    log_debug("  pos/vel");
+    for (u8 j=0; j < 3; j++) {
+      log_debug("    %f %f", sdiffs[i].sat_pos[j], sdiffs[i].sat_vel[j]);
+    }
+  }
+  log_debug("amb[*]");
+  log_debug("fixed:");
+  for (u8 i=0; i < s->fixed_ambs.n; i++){
+    log_debug("  %u: %f", s->fixed_ambs.sids[i].sat, s->fixed_ambs.ambs[i]);
+  }
+  log_debug("float:");
+  for (u8 i=0; i < s->float_ambs.n; i++){
+    log_debug("  %u: %f", s->float_ambs.sids[i].sat, s->float_ambs.ambs[i]);
+  }
+
   s8 ret = baseline(num_sdiffs, sdiffs, ref_ecef, &s->fixed_ambs, num_used, b,
                     disable_raim, raim_threshold);
   if (ret >= 0) {
     if (ret == 1) /* TODO: Export this rather than just printing */
+    {
       log_warn("dgnss_baseline: Fixed baseline RAIM repair");
+    }
     log_debug("fixed solution");
+    log_debug("ret: %i ", ret);
+    log_debug("fixed baseline: %f %f %f", b[0], b[1], b[2]);
     DEBUG_EXIT();
     return 1;
   }
@@ -434,8 +493,12 @@ s8 dgnss_baseline(u8 num_sdiffs, const sdiff_t *sdiffs,
                       disable_raim, raim_threshold))
         >= 0) {
     if (ret == 1) /* TODO: Export this rather than just printing */
+    {
       log_warn("dgnss_baseline: Float baseline RAIM repair");
+    }
     log_debug("float solution");
+    log_debug("ret: %i", ret);
+    log_debug("float baseline: %f %f %f", b[0], b[1], b[2]);
     DEBUG_EXIT();
     return 2;
   }
@@ -457,11 +520,11 @@ void dgnss_init_known_baseline(u8 num_sats, sdiff_t *sdiffs,
 
   sdiff_t corrected_sdiffs[num_sats];
 
-  u8 old_prns[MAX_CHANNELS];
-  memcpy(old_prns, sats_management.prns, sats_management.num_sats * sizeof(u8));
+  gnss_signal_t old_sids[MAX_CHANNELS];
+  memcpy(old_sids, sats_management.sids, sats_management.num_sats * sizeof(gnss_signal_t));
   /* rebase globals to a new reference sat
    * (permutes corrected_sdiffs accordingly) */
-  dgnss_rebase_ref(num_sats, sdiffs, ref_ecef, old_prns, corrected_sdiffs);
+  dgnss_rebase_ref(num_sats, sdiffs, ref_ecef, old_sids, corrected_sdiffs);
 
   double dds[2*(num_sats-1)];
   make_measurements(num_sats-1, corrected_sdiffs, dds);
@@ -531,8 +594,8 @@ void measure_b_with_external_ambs(u8 state_dim, const double *state_mean,
 
   sdiff_t sdiffs_with_ref_first[num_sdiffs];
   /* We require the sats updating has already been done with these sdiffs */
-  u8 ref_prn = sats_management.prns[0];
-  copy_sdiffs_put_ref_first(ref_prn, num_sdiffs, sdiffs, sdiffs_with_ref_first);
+  gnss_signal_t ref_sid = sats_management.sids[0];
+  copy_sdiffs_put_ref_first(ref_sid, num_sdiffs, sdiffs, sdiffs_with_ref_first);
 
   measure_b(state_dim, state_mean, num_sdiffs, sdiffs_with_ref_first, receiver_ecef, b);
 
@@ -546,8 +609,8 @@ void measure_amb_kf_b(u8 num_sdiffs, sdiff_t *sdiffs,
 
   sdiff_t sdiffs_with_ref_first[num_sdiffs];
   /* We require the sats updating has already been done with these sdiffs */
-  u8 ref_prn = sats_management.prns[0];
-  copy_sdiffs_put_ref_first(ref_prn, num_sdiffs, sdiffs, sdiffs_with_ref_first);
+  gnss_signal_t ref_sid = sats_management.sids[0];
+  copy_sdiffs_put_ref_first(ref_sid, num_sdiffs, sdiffs, sdiffs_with_ref_first);
 
   measure_b( nkf.state_dim, nkf.state_mean,
       num_sdiffs, sdiffs_with_ref_first, receiver_ecef, b);
@@ -576,14 +639,14 @@ static u8 get_de_and_phase(sats_management_t *sats_man,
                            double ref_ecef[3],
                            double *de, double *phase)
 {
-  u8 ref_prn = sats_man->prns[0];
+  gnss_signal_t ref_sid = sats_man->sids[0];
   u8 num_sats = sats_man->num_sats;
   double e0[3];
   double phi0 = 0;
-  /* TODO: Detect if ref_prn is not in prns and return error? */
+  /* TODO: Detect if ref_sid is not in sids and return error? */
   u8 i;
   for (i=0; i<num_sdiffs; i++) {
-    if (sdiffs[i].prn == ref_prn) {
+    if (sid_is_equal(sdiffs[i].sid, ref_sid)) {
       e0[0] = sdiffs[i].sat_pos[0] - ref_ecef[0];
       e0[1] = sdiffs[i].sat_pos[1] - ref_ecef[1];
       e0[2] = sdiffs[i].sat_pos[2] - ref_ecef[2];
@@ -595,12 +658,12 @@ static u8 get_de_and_phase(sats_management_t *sats_man,
   i=1;
   u8 j = 0;
   while (i < num_sats) {
-    if (sdiffs[j].prn < sats_man->prns[i]) {
+    if (sid_compare(sdiffs[j].sid, sats_man->sids[i]) < 0) {
       j++;
     }
-    else if (sdiffs[j].prn > sats_man->prns[i]) {
+    else if (sid_compare(sdiffs[j].sid, sats_man->sids[i]) > 0) {
       /* This should never happen. */
-      log_warn("sdiffs should be a super set of sats_man prns");
+      log_warn("sdiffs should be a super set of sats_man sids");
       i++;
     }
     else {  /* else they match */
@@ -654,15 +717,15 @@ u8 get_amb_kf_cov(double *cov)
   return num_dds;
 }
 
-u8 get_amb_kf_prns(u8 *prns)
+u8 get_amb_kf_sids(gnss_signal_t *sids)
 {
-  memcpy(prns, sats_management.prns, sats_management.num_sats * sizeof(u8));
+  memcpy(sids, sats_management.sids, sats_management.num_sats * sizeof(gnss_signal_t));
   return sats_management.num_sats;
 }
 
-u8 get_amb_test_prns(u8 *prns)
+u8 get_amb_test_sids(gnss_signal_t *sids)
 {
-  memcpy(prns, ambiguity_test.sats.prns, ambiguity_test.sats.num_sats * sizeof(u8));
+  memcpy(sids, ambiguity_test.sats.sids, ambiguity_test.sats.num_sats * sizeof(gnss_signal_t));
   return ambiguity_test.sats.num_sats;
 }
 

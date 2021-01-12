@@ -14,9 +14,9 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "common.h"
+#include <libswiftnav/common.h>
 
-#include "linear_algebra.h"
+#include <libswiftnav/linear_algebra.h>
 
 
 /* Todo(MP) -- Implement fast linear solve (all-in-one) with Cholesky
@@ -983,9 +983,8 @@ void vector_cross(const double a[3], const double b[3],
 double vector_distance(u32 n, const double *a, const double *b) {
   double c[n];
   vector_subtract(n, a, b, c);
-  return sqrt(vector_norm(3, c));
+  return vector_norm(n, c);
 }
 
 /* \} */
 /* \} */
-

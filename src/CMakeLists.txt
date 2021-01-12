@@ -8,8 +8,9 @@ file(GLOB libswiftnav_HEADERS "${PROJECT_SOURCE_DIR}/include/libswiftnav/*.h")
 
 include_directories("${PROJECT_SOURCE_DIR}/CBLAS/include")
 include_directories("${PROJECT_SOURCE_DIR}/clapack-3.2.1-CMAKE/INCLUDE")
+include_directories("${PROJECT_SOURCE_DIR}/libfec/include")
 
-include_directories("${PROJECT_SOURCE_DIR}/include/libswiftnav")
+include_directories("${PROJECT_SOURCE_DIR}/include")
 
 set_source_files_properties(${plover_SRCS} PROPERTIES GENERATED TRUE)
 set_source_files_properties(${plover_HDRS} PROPERTIES GENERATED TRUE)
@@ -19,14 +20,14 @@ set(libswiftnav_SRCS
   ephemeris.c
   nav_msg.c
   pvt.c
-  tropo.c
+  troposphere.c
   track.c
   correlate.c
   coord_system.c
   linear_algebra.c
   prns.c
   almanac.c
-  gpstime.c
+  time.c
   edc.c
   rtcm3.c
   bits.c
@@ -41,6 +42,13 @@ set(libswiftnav_SRCS
   ambiguity_test.c
   printing_utils.c
   filter_utils.c
+  signal.c
+  ionosphere.c
+  bit_sync.c
+  l2c_capability.c
+  cnav_msg.c
+  nav_msg_glo.c
+  counter_checker/counter_checker.c
   ${plover_SRCS}
 
   CACHE INTERNAL ""
@@ -69,11 +77,9 @@ install(FILES ${libswiftnav_HEADERS} DESTINATION include/libswiftnav)
 MESSAGE("${PROJECT_SOURCE_DIR}")
 
 add_custom_command(
-  OUTPUT checkpatch_output.txt
+  OUTPUT checkpatch
   DEPENDS ${libswiftnav_SRCS}
   VERBATIM
-  COMMAND "${PROJECT_SOURCE_DIR}/checks/checkoutput.sh"
-    "${PROJECT_SOURCE_DIR}/src/*.c"
-    "${PROJECT_SOURCE_DIR}/checks/checkpatch.pl")
+  COMMAND "${PROJECT_SOURCE_DIR}/checks/checkoutput.sh")
 
-add_custom_target(checkpatch DEPENDS checkpatch_output.txt) 
+add_custom_target(checkpatch DEPENDS checkpatch)

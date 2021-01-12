@@ -1,7 +1,9 @@
 
 #include <check.h>
 
-#include <bits.h>
+#include <libswiftnav/bits.h>
+
+#include <stdio.h>
 
 START_TEST(test_parity)
 {
@@ -122,6 +124,102 @@ START_TEST(test_setbits)
 }
 END_TEST
 
+START_TEST(test_bitshl)
+{
+  u8 src0[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  u8 res0[] = { 0xBE, 0xEF, 0x00, 0x00 };
+
+  u8 src1[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  u8 res1[] = { 0xEA, 0xDB, 0xEE, 0xF0 };
+
+  u8 src2[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  u8 res2[] = { 0xDB, 0xEE, 0xF0, 0x00 };
+
+  u8 src3[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  u8 res3[] = { 0xB6, 0xFB, 0xBC, 0x00 };
+
+  bitshl(src0, sizeof(src0), 16);
+  fail_unless(0 == memcmp(src0, res0, 4), "Byte shift test");
+
+  bitshl(src1, sizeof(src1), 4);
+  fail_unless(0 == memcmp(src1, res1, 4), "4-bit shift");
+
+  bitshl(src2, sizeof(src2), 12);
+  fail_unless(0 == memcmp(src2, res2, 4), "12-bit shift");
+
+  bitshl(src3, sizeof(src3), 10);
+  fail_unless(0 == memcmp(src3, res3, 4), "10-bit shift");
+}
+END_TEST
+
+START_TEST(test_bitcopy)
+{
+  u8 src0[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  u8 res0[] = { 0xBE, 0xEF, 0xBE, 0xEF };
+
+  u8 src1[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  u8 res1[] = { 0xEA, 0xDB, 0xEE, 0xFF };
+
+  u8 src2[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
+  // u8 dst2[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
+  u8 res2[] = { 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xAD};
+
+  bitcopy(src0, 0, src0, 16, 16);
+  fail_unless(0 == memcmp(src0, res0, 4), "16-bit copy");
+
+  bitcopy(src1, 0, src1, 4, 28);
+  fail_unless(0 == memcmp(src1, res1, 4), "28-bit copy");
+
+  bitcopy(src2, 0, src2, 8, 72);
+  fail_unless(0 == memcmp(src2, res2, 4), "72-bit copy");
+}
+END_TEST
+
+START_TEST(test_count_bits_x)
+{
+  u8  src8[]  = { 0xDE, 0xAD, 0x12, 0xEF };
+  u8  res8[]  = { 6, 5, 2, 7 };
+
+  u16 src16[] = { 0xDE05, 0xADF6, 0xBE32, 0xEF45 };
+  u8  res16[]  = { 8, 11, 9, 10 };
+
+  u32 src32[] = { 0xDE051234, 0x00000000, 0x00329300, 0x1F45A6C8 };
+  u8  res32[]  = { 13, 0, 7, 15 };
+
+  u64 src64[] = { 0xDE051234432150ED, 0x0000000080000000,
+                  0x0032930000392300, 0x10F14350A060C080 };
+  u8  res64[]  = { 26, 1, 14, 18 };
+
+  for (unsigned i = 0; i < sizeof(src8)/ sizeof(src8[0]); i++) {
+    u8 r = count_bits_u8(src8[i], 1);
+    fail_unless(res8[i] == r, "count_bits_u8(0x%x, 1) = %d", src8[i], r);
+    r = count_bits_u8(src8[i], 0);
+    fail_unless(8-res8[i] == r, "count_bits_u8(0x%x, 0) = %d", src8[i], r);
+  }
+
+  for (unsigned i = 0; i < sizeof(src16)/ sizeof(src16[0]); i++) {
+    u8 r = count_bits_u16(src16[i], 1);
+    fail_unless(res16[i] == r, "count_bits_u16(0x%x, 1) = %d", src16[i], r);
+    r = count_bits_u16(src16[i], 0);
+    fail_unless(16-res16[i] == r, "count_bits_u16(0x%x, 0) = %d", src16[i], r);
+  }
+
+  for (unsigned i = 0; i < sizeof(src32)/ sizeof(src32[0]); i++) {
+    u8 r = count_bits_u32(src32[i], 1);
+    fail_unless(res32[i] == r, "count_bits_u32(0x%x, 1) = %d", src32[i], r);
+    r = count_bits_u32(src32[i], 0);
+    fail_unless(32-res32[i] == r, "count_bits_u32(0x%x, 0) = %d", src32[i], r);
+  }
+
+  for (unsigned i = 0; i < sizeof(src64)/ sizeof(src64[0]); i++) {
+    u8 r = count_bits_u64(src64[i], 1);
+    fail_unless(res64[i] == r, "count_bits_u64(0x%lx, 1) = %d", src64[i], r);
+    r = count_bits_u64(src64[i], 0);
+    fail_unless(64-res64[i] == r, "count_bits_u64(0x%lx, 0) = %d", src64[i], r);
+  }
+}
+END_TEST
+
 Suite* bits_suite(void)
 {
   Suite *s = suite_create("Bit Utils");
@@ -132,8 +230,10 @@ Suite* bits_suite(void)
   tcase_add_test(tc_core, test_getbits);
   tcase_add_test(tc_core, test_setbitu);
   tcase_add_test(tc_core, test_setbits);
+  tcase_add_test(tc_core, test_bitshl);
+  tcase_add_test(tc_core, test_bitcopy);
+  tcase_add_test(tc_core, test_count_bits_x);
   suite_add_tcase(s, tc_core);
 
   return s;
 }
-

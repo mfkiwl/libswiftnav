@@ -15,12 +15,11 @@
 #include <math.h>
 #include <float.h>
 
-#include "constants.h"
-#include "prns.h"
-#include "track.h"
-#include "ephemeris.h"
-#include "tropo.h"
-#include "coord_system.h"
+#include <libswiftnav/constants.h>
+#include <libswiftnav/prns.h>
+#include <libswiftnav/track.h>
+#include <libswiftnav/ephemeris.h>
+#include <libswiftnav/coord_system.h>
 
 /** \defgroup track Tracking
  * Functions used in tracking.
@@ -520,13 +519,28 @@ void comp_tl_update(comp_tl_state_t *s, correlation_t cs[3])
  * \param a         The alias lock detect struct.
  * \param acc_len   The number of points to accumulate before calculating error.
  * \param time_diff Time difference between calls to alias_detect_first and
- *                  alias_detect_full.
+ *                  alias_detect_second.
  */
 void alias_detect_init(alias_detect_t *a, u32 acc_len, float time_diff)
 {
   memset(a, 0, sizeof(*a));
   a->acc_len = acc_len;
   a->dt = time_diff;
+}
+
+/** Update alias lock detection structure.
+ *
+ * \param a         The alias lock detect struct.
+ * \param acc_len   The number of points to accumulate before calculating error.
+ * \param time_diff Time difference between calls to alias_detect_first and
+ *                  alias_detect_second.
+ */
+void alias_detect_reinit(alias_detect_t *a, u32 acc_len, float time_diff)
+{
+  /* Just reset averaging. To preserve state it would be necessary to rescale
+   * the dot and cross terms based on the new and old time_diff values.
+   */
+  alias_detect_init(a, acc_len, time_diff);
 }
 
 /** Load first I/Q sample into alias lock detect structure.
@@ -616,8 +630,8 @@ void lock_detect_update(lock_detect_t *l, float I, float Q, float DT)
 {
   float a, b;
   /* Calculated low-pass filtered prompt correlations */
-  a = lock_detect_lpf_update(&l->lpfi, fabs(I) / DT) / l->k2;
-  b = lock_detect_lpf_update(&l->lpfq, fabs(Q) / DT);
+  a = lock_detect_lpf_update(&l->lpfi, fabsf(I) / DT) / l->k2;
+  b = lock_detect_lpf_update(&l->lpfq, fabsf(Q) / DT);
 
   if (a > b) {
     /* In-phase > quadrature, looks like we're locked */
@@ -745,68 +759,96 @@ float cn0_est(cn0_est_state_t *s, float I, float Q)
   return s->log_bw - 10.f*log10f(s->nsr);
 }
 
-void calc_navigation_measurement(u8 n_channels, channel_measurement_t meas[],
-                                 navigation_measurement_t nav_meas[], double nav_time,
-                                 ephemeris_t ephemerides[])
+/** Calculate observations from tracking channel measurements.
+ *
+ * \param n_channels Number of tracking channel measurements
+ * \param meas Array of pointers to tracking channel measurements, length
+ *             `n_channels`
+ * \param nav_meas Array of pointers of where to store the output observations,
+ *                 length `n_channels`
+ * \param rec_time Pointer to an estimate of the current GPS time. Can be `NULL`
+                   in which case one of the pseudoranges is chosen as a
+                   reference and set to a nominal range, implying a certain
+                   receiver clock error.
+ * \param e Array of pointers to ephemerides
+ */
+s8 calc_navigation_measurement(u8 n_channels, const channel_measurement_t *meas[],
+                               navigation_measurement_t *nav_meas[], gps_time_t *rec_time,
+                               const ephemeris_t* e[])
 {
-  channel_measurement_t* meas_ptrs[n_channels];
-  navigation_measurement_t* nav_meas_ptrs[n_channels];
-  ephemeris_t* ephemerides_ptrs[n_channels];
-
-  for (u8 i=0; i<n_channels; i++) {
-    meas_ptrs[i] = &meas[i];
-    nav_meas_ptrs[i] = &nav_meas[i];
-    ephemerides_ptrs[i] = &ephemerides[meas[i].prn];
-  }
-
-  calc_navigation_measurement_(n_channels, meas_ptrs, nav_meas_ptrs, nav_time, ephemerides_ptrs);
-}
-
-void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], navigation_measurement_t* nav_meas[], double nav_time, ephemeris_t* ephemerides[])
-{
-  double TOTs[n_channels];
-  double min_TOF = -DBL_MAX;
   double clock_err[n_channels], clock_rate_err[n_channels];
 
   for (u8 i=0; i<n_channels; i++) {
-    TOTs[i] = 1e-3 * meas[i]->time_of_week_ms;
-    TOTs[i] += meas[i]->code_phase_chips / 1.023e6;
-    TOTs[i] += (nav_time - meas[i]->receiver_time) * meas[i]->code_phase_rate / 1.023e6;
+    nav_meas[i]->sid = meas[i]->sid;
 
-    /** \todo Maybe keep track of week number in tracking channel
-        state or derive it from system time. */
-    nav_meas[i]->tot.tow = TOTs[i];
-    gps_time_match_weeks(&nav_meas[i]->tot, &ephemerides[i]->toe);
+    /* Compute the time of transmit of the signal on the satellite from the
+     * tracking loop parameters. This will be used to compute the pseudorange. */
+    nav_meas[i]->tot.tow = 1e-3 * meas[i]->time_of_week_ms;
+    nav_meas[i]->tot.tow += meas[i]->code_phase_chips / GPS_CA_CHIPPING_RATE;
+    nav_meas[i]->tot.tow -= meas[i]->rec_time_delta * meas[i]->code_phase_rate / GPS_CA_CHIPPING_RATE;
+    /* For now use the week number from the ephemeris. */
+    /* TODO: Should we use a more reliable source for the week number? */
+    /* TODO (Leith): There might be a bug where ephmeris ToW is set to 0 */
+    /* near end of the week, without ToW being rolled over? */
+    /* It would cause this functions' assumptions to break. */
+    gps_time_match_weeks(&nav_meas[i]->tot, &e[i]->toe);
 
+    /* Compute the carrier phase measurement. */
+    nav_meas[i]->raw_carrier_phase = meas[i]->carrier_phase;
+    nav_meas[i]->raw_carrier_phase -= meas[i]->rec_time_delta * meas[i]->carrier_freq;
+
+    /* For raw Doppler we use the instantaneous carrier frequency from the
+     * tracking loop. */
     nav_meas[i]->raw_doppler = meas[i]->carrier_freq;
+
+    /* Copy over remaining values. */
     nav_meas[i]->snr = meas[i]->snr;
-    nav_meas[i]->prn = meas[i]->prn;
-
-    nav_meas[i]->carrier_phase = meas[i]->carrier_phase;
-    nav_meas[i]->carrier_phase += (nav_time - meas[i]->receiver_time) * meas[i]->carrier_freq;
-
     nav_meas[i]->lock_counter = meas[i]->lock_counter;
-	
-    /* calc sat clock error */
-    calc_sat_state(ephemerides[i], nav_meas[i]->tot,
-                   nav_meas[i]->sat_pos, nav_meas[i]->sat_vel,
-                   &clock_err[i], &clock_rate_err[i]);
 
-    /* remove clock error to put all tots within the same time window */
-    if ((TOTs[i] + clock_err[i]) > min_TOF)
-      min_TOF = TOTs[i];
+    /* calc sat clock error */
+    if (calc_sat_state(e[i], &nav_meas[i]->tot,
+                       nav_meas[i]->sat_pos, nav_meas[i]->sat_vel,
+                       &clock_err[i], &clock_rate_err[i]) != 0) {
+      return -1;
+    }
+  }
+
+  /* To calculate the pseudorange from the time of transmit we need the local
+   * time of reception. */
+  gps_time_t tor;
+  if (rec_time) {
+    /* If we were given a time, use that. */
+    tor = *rec_time;
+  } else {
+    /* If we were not given a time of reception then we can just set one of the
+     * pseudoranges aribtrarily to a nominal value and reference all the other
+     * pseudoranges to that. This doesn't affect the PVT solution but does
+     * potentially correspond to a large receiver clock error. */
+    tor = nav_meas[0]->tot;
+    tor.tow += GPS_NOMINAL_RANGE / GPS_C;
+    normalize_gps_time(&tor);
   }
 
   for (u8 i=0; i<n_channels; i++) {
-    nav_meas[i]->raw_pseudorange = (min_TOF - TOTs[i])*GPS_C + GPS_NOMINAL_RANGE;
+    /* The raw pseudorange is just the time of flight divided by the speed of
+     * light. */
+    nav_meas[i]->raw_pseudorange = GPS_C * gpsdifftime(&tor, &nav_meas[i]->tot);
 
-    nav_meas[i]->pseudorange = nav_meas[i]->raw_pseudorange \
-                               + clock_err[i]*GPS_C;
-    nav_meas[i]->doppler = nav_meas[i]->raw_doppler + clock_rate_err[i]*GPS_L1_HZ;
+    /* The corrected pseudorange, carrier_phase, Doppler applies the clock error
+     * and clock rate error correction from the ephemeris respectively. */
+    nav_meas[i]->pseudorange = nav_meas[i]->raw_pseudorange
+                               + clock_err[i] * GPS_C;
+    nav_meas[i]->carrier_phase = nav_meas[i]->raw_carrier_phase
+                                 - clock_err[i] * GPS_L1_HZ;
+    nav_meas[i]->doppler = nav_meas[i]->raw_doppler
+                           + clock_rate_err[i] * GPS_L1_HZ;
 
+    /* We also apply the clock correction to the time of transmit. */
     nav_meas[i]->tot.tow -= clock_err[i];
-    nav_meas[i]->tot = normalize_gps_time(nav_meas[i]->tot);
+    normalize_gps_time(&nav_meas[i]->tot);
   }
+
+  return 0;
 }
 
 /** Compare navigation message by PRN.
@@ -814,8 +856,8 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
  */
 int nav_meas_cmp(const void *a, const void *b)
 {
-  return (s8)((navigation_measurement_t*)a)->prn
-       - (s8)((navigation_measurement_t*)b)->prn;
+  return sid_compare(((navigation_measurement_t*)a)->sid,
+                     ((navigation_measurement_t*)b)->sid);
 }
 
 /** Set measurement precise Doppler using time difference of carrier phase.
@@ -828,11 +870,12 @@ int nav_meas_cmp(const void *a, const void *b)
  * \param n_old Number of measurements in `m_old`
  * \param m_old Array of old navigation measurements, sorted by PRN
  * \param m_corrected Array in which to store the output measurements
+ * \param dt The difference in receiver time between the two measurements
  * \return The number of measurements written to `m_tdcp`
  */
 u8 tdcp_doppler(u8 n_new, navigation_measurement_t *m_new,
                 u8 n_old, navigation_measurement_t *m_old,
-                navigation_measurement_t *m_corrected)
+                navigation_measurement_t *m_corrected, double dt)
 {
   /* Sort m_new, m_old should already be sorted. */
   qsort(m_new, n_new, sizeof(navigation_measurement_t), nav_meas_cmp);
@@ -841,9 +884,9 @@ u8 tdcp_doppler(u8 n_new, navigation_measurement_t *m_new,
 
   /* Loop over m_new and m_old and check if a PRN is present in both. */
   for (i=0, j=0; i<n_new && j<n_old; i++, j++) {
-    if (m_new[i].prn < m_old[j].prn)
+    if (sid_compare(m_new[i].sid, m_old[j].sid) < 0)
       j--;
-    else if (m_new[i].prn > m_old[j].prn)
+    else if (sid_compare(m_new[i].sid, m_old[j].sid) > 0)
       i--;
     else {
       /* Copy m_new to m_corrected. */
@@ -851,12 +894,11 @@ u8 tdcp_doppler(u8 n_new, navigation_measurement_t *m_new,
       /* Calculate the Doppler correction between raw and corrected. */
       double dopp_corr = m_corrected[n].doppler - m_corrected[n].raw_doppler;
       /* Calculate raw Doppler from time difference of carrier phase. */
-      /* TODO: check that using difference of TOTs here is a valid
-       * approximation. */
-      m_corrected[n].raw_doppler = (m_new[i].carrier_phase - m_old[j].carrier_phase)
-                                    / gpsdifftime(m_new[i].tot, m_old[j].tot);
+      m_corrected[n].raw_doppler = (m_new[i].raw_carrier_phase - m_old[j].raw_carrier_phase)
+                                    / dt;
       /* Re-apply the same correction to the raw Doppler to get the corrected Doppler. */
-      m_corrected[n].doppler = m_corrected[n].raw_doppler + dopp_corr;
+      m_corrected[n].doppler = (m_new[i].carrier_phase - m_old[j].carrier_phase)
+                                    / dt + dopp_corr;
       n++;
     }
   }
@@ -865,4 +907,3 @@ u8 tdcp_doppler(u8 n_new, navigation_measurement_t *m_new,
 }
 
 /** \} */
-
